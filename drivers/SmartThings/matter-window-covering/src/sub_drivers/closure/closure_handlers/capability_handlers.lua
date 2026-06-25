@@ -53,8 +53,10 @@ function ClosureCapabilityHandlers.handle_shade_level(driver, device, cmd)
   local dim_eps = closure_utils.get_closure_dimension_eps(device)
   local endpoint_id = #dim_eps == 1 and dim_eps[1] or device:component_to_endpoint(cmd.component)
   if endpoint_id then
+    local reverse = device:get_field(fields.REVERSE_POLARITY)
+    local shade_level = reverse and (100 - cmd.args.shadeLevel) or cmd.args.shadeLevel
     device:send(clusters.ClosureDimension.server.commands.SetTarget(
-      device, endpoint_id, cmd.args.shadeLevel * 100
+      device, endpoint_id, shade_level * 100
     ))
   end
 end

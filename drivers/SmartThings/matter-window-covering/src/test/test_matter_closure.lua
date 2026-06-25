@@ -782,4 +782,339 @@ test.register_coroutine_test(
   {test_init = test_init_door}
 )
 
+-- Test: handle_level command for door type
+test.register_coroutine_test(
+  "doorControl level command sends SetTarget to endpoint 11", function()
+    update_profile_door()
+    test.wait_for_events()
+    test.socket.capability:__queue_receive({
+      mock_door_device.id,
+      {capability = "level", component = "door1", command = "setLevel", args = {60}},
+    })
+    test.socket.matter:__expect_send({
+      mock_door_device.id,
+      clusters.ClosureDimension.server.commands.SetTarget(mock_door_device, 11, 60 * 100)
+    })
+  end,
+  {test_init = test_init_door}
+)
+
+-- Test: handle_level command for door type endpoint 12
+test.register_coroutine_test(
+  "doorControl level command sends SetTarget to endpoint 12", function()
+    update_profile_door()
+    test.wait_for_events()
+    test.socket.capability:__queue_receive({
+      mock_door_device.id,
+      {capability = "level", component = "door2", command = "setLevel", args = {30}},
+    })
+    test.socket.matter:__expect_send({
+      mock_door_device.id,
+      clusters.ClosureDimension.server.commands.SetTarget(mock_door_device, 12, 30 * 100)
+    })
+  end,
+  {test_init = test_init_door}
+)
+
+-- Test: Multi-panel device component mapping
+test.register_coroutine_test(
+  "Multi-panel device endpoint_to_component mapping", function()
+    update_profile()
+    test.wait_for_events()
+    -- endpoint 11 should map to windowShade1
+    local component = mock_device:endpoint_to_component(11)
+    assert(component == "windowShade1", "Expected windowShade1, got " .. tostring(component))
+    -- endpoint 12 should map to windowShade2
+    component = mock_device:endpoint_to_component(12)
+    assert(component == "windowShade2", "Expected windowShade2, got " .. tostring(component))
+  end
+)
+
+-- Test: Single panel device component mapping (main)
+test.register_coroutine_test(
+  "Single panel device component_to_endpoint mapping to main", function()
+    update_profile()
+    test.wait_for_events()
+    local endpoint = mock_device:component_to_endpoint("main")
+    assert(endpoint ~= nil, "Expected valid endpoint, got nil")
+  end
+)
+
+-- Test: get_closure_dimension_eps returns sorted endpoints
+test.register_coroutine_test(
+  "get_closure_dimension_eps returns sorted endpoints excluding 0", function()
+    update_profile()
+    test.wait_for_events()
+    -- Should return endpoints 11 and 12, excluding 0
+    local eps = mock_device:get_endpoints(clusters.ClosureDimension.ID)
+    assert(#eps >= 2, "Expected at least 2 ClosureDimension endpoints")
+  end
+)
+
+-- Test: deep_equals function with tables
+test.register_coroutine_test(
+  "deep_equals returns true for identical tables", function()
+    local t1 = {a = 1, b = {c = 2}}
+    local t2 = {a = 1, b = {c = 2}}
+    local closure_utils = require "sub_drivers.closure.closure_utils.utils"
+    assert(closure_utils.deep_equals(t1, t2, {ignore_functions = true}), "Tables should be equal")
+  end
+)
+
+-- Test: deep_equals returns false for different tables
+test.register_coroutine_test(
+  "deep_equals returns false for different tables", function()
+    local t1 = {a = 1, b = {c = 2}}
+    local t2 = {a = 1, b = {c = 3}}
+    local closure_utils = require "sub_drivers.closure.closure_utils.utils"
+    assert(not closure_utils.deep_equals(t1, t2, {ignore_functions = true}), "Tables should not be equal")
+  end
+)
+
+-- Test: set_closure_control_state caches state
+test.register_coroutine_test(
+  "set_closure_control_state caches state per endpoint", function()
+    update_profile()
+    test.wait_for_events()
+    local closure_utils = require "sub_drivers.closure.closure_utils.utils"
+    local fields = require "sub_drivers.closure.closure_utils.fields"
+    closure_utils.set_closure_control_state(mock_device, 10, {main = 1})
+    local cache = mock_device:get_field(fields.CLOSURE_CONTROL_STATE_CACHE)
+    assert(cache ~= nil, "Cache should not be nil")
+    assert(cache[10] ~= nil, "Cache for endpoint 10 should exist")
+    assert(cache[10].main == 1, "Main state should be 1")
+  end
+)
+
+-- Test: emit_closure_control_capability with nil cache
+test.register_coroutine_test(
+  "emit_closure_control_capability returns early with nil cache", function()
+    update_profile()
+    test.wait_for_events()
+    local closure_utils = require "sub_drivers.closure.closure_utils.utils"
+    -- Should not emit any event when cache is nil
+    closure_utils.emit_closure_control_capability(mock_device, 10)
+    test.wait_for_events()
+  end
+)
+
+-- Test: main_state_attr_handler with nil value
+test.register_coroutine_test(
+  "main_state_attr_handler returns early with nil value", function()
+    update_profile()
+    test.wait_for_events()
+    local attr_handlers = require "sub_drivers.closure.closure_handlers.attribute_handlers"
+    local mock_ib = {endpoint_id = 10, data = {value = nil}}
+    attr_handlers.main_state_attr_handler(nil, mock_device, mock_ib, nil)
+    test.wait_for_events()
+  end
+)
+
+-- Test: main_state_attr_handler with MOVING state
+test.register_coroutine_test(
+  "main_state_attr_handler sets state and emits capability", function()
+    update_profile()
+    test.wait_for_events()
+    local attr_handlers = require "sub_drivers.closure.closure_handlers.attribute_handlers"
+    local clusters = require "st.matter.clusters"
+    local mock_ib = {endpoint_id = 10, data = {value = clusters.ClosureControl.types.MainStateEnum.MOVING}}
+    attr_handlers.main_state_attr_handler(nil, mock_device, mock_ib, nil)
+    test.wait_for_events()
+  end
+)
+
+-- Test: overall_current_state_attr_handler with nil elements
+test.register_coroutine_test(
+  "overall_current_state_attr_handler returns early with nil elements", function()
+    update_profile()
+    test.wait_for_events()
+    local attr_handlers = require "sub_drivers.closure.closure_handlers.attribute_handlers"
+    local mock_ib = {endpoint_id = 10, data = {elements = nil}}
+    attr_handlers.overall_current_state_attr_handler(nil, mock_device, mock_ib, nil)
+    test.wait_for_events()
+  end
+)
+
+-- Test: overall_target_state_attr_handler with nil elements
+test.register_coroutine_test(
+  "overall_target_state_attr_handler returns early with nil elements", function()
+    update_profile()
+    test.wait_for_events()
+    local attr_handlers = require "sub_drivers.closure.closure_handlers.attribute_handlers"
+    local mock_ib = {endpoint_id = 10, data = {elements = nil}}
+    attr_handlers.overall_target_state_attr_handler(nil, mock_device, mock_ib, nil)
+    test.wait_for_events()
+  end
+)
+
+-- Test: closure_dimension_current_state_handler with nil elements
+test.register_coroutine_test(
+  "closure_dimension_current_state_handler returns early with nil elements", function()
+    update_profile()
+    test.wait_for_events()
+    local attr_handlers = require "sub_drivers.closure.closure_handlers.attribute_handlers"
+    local mock_ib = {endpoint_id = 11, data = {elements = nil}}
+    attr_handlers.closure_dimension_current_state_handler(nil, mock_device, mock_ib, nil)
+    test.wait_for_events()
+  end
+)
+
+-- Test: closure_dimension_current_state_handler with nil position
+test.register_coroutine_test(
+  "closure_dimension_current_state_handler returns early with nil position", function()
+    update_profile()
+    test.wait_for_events()
+    local attr_handlers = require "sub_drivers.closure.closure_handlers.attribute_handlers"
+    local mock_ib = {endpoint_id = 11, data = {elements = {position = {value = nil}}}}
+    attr_handlers.closure_dimension_current_state_handler(nil, mock_device, mock_ib, nil)
+    test.wait_for_events()
+  end
+)
+
+-- Test: tag_list_handler with BARRIER tag (namespace_id = 0x44, tag = 2)
+test.register_coroutine_test(
+  "tag_list_handler with BARRIER tag sets closure tag", function()
+    -- First reset fields
+    local fields = require "sub_drivers.closure.closure_utils.fields"
+    mock_device:set_field(fields.CLOSURE_TAG, nil)
+    local attr_handlers = require "sub_drivers.closure.closure_handlers.attribute_handlers"
+    local mock_ib = {
+      endpoint_id = 10,
+      data = {
+        elements = {
+          {elements = {namespace_id = {value = 0x44}, tag = {value = 2}}}
+        }
+      }
+    }
+    attr_handlers.tag_list_handler(nil, mock_device, mock_ib, nil)
+    assert(mock_device:get_field(fields.CLOSURE_TAG) == fields.closure_tag_list.BARRIER, "Tag should be BARRIER, got " .. tostring(mock_device:get_field(fields.CLOSURE_TAG)))
+  end
+)
+
+-- Test: tag_list_handler with CABINET tag (namespace_id = 0x44, tag = 3)
+test.register_coroutine_test(
+  "tag_list_handler with CABINET tag sets closure tag", function()
+    -- First reset fields
+    local fields = require "sub_drivers.closure.closure_utils.fields"
+    mock_device:set_field(fields.CLOSURE_TAG, nil)
+    local attr_handlers = require "sub_drivers.closure.closure_handlers.attribute_handlers"
+    local mock_ib = {
+      endpoint_id = 10,
+      data = {
+        elements = {
+          {elements = {namespace_id = {value = 0x44}, tag = {value = 3}}}
+        }
+      }
+    }
+    attr_handlers.tag_list_handler(nil, mock_device, mock_ib, nil)
+    assert(mock_device:get_field(fields.CLOSURE_TAG) == fields.closure_tag_list.CABINET, "Tag should be CABINET, got " .. tostring(mock_device:get_field(fields.CLOSURE_TAG)))
+  end
+)
+
+-- Test: tag_list_handler with nil elements
+test.register_coroutine_test(
+  "tag_list_handler returns early with nil elements", function()
+    update_profile()
+    test.wait_for_events()
+    local attr_handlers = require "sub_drivers.closure.closure_handlers.attribute_handlers"
+    local mock_ib = {endpoint_id = 10, data = {elements = nil}}
+    attr_handlers.tag_list_handler(nil, mock_device, mock_ib, nil)
+    test.wait_for_events()
+  end
+)
+
+-- Test: power_source_attribute_list_handler with BatChargeLevel (0x0E)
+test.register_coroutine_test(
+  "power_source_attribute_list_handler sets BATTERY_LEVEL support", function()
+    -- First reset fields
+    local fields = require "sub_drivers.closure.closure_utils.fields"
+    mock_device:set_field(fields.CLOSURE_BATTERY_SUPPORT, nil)
+    local attr_handlers = require "sub_drivers.closure.closure_handlers.attribute_handlers"
+    local mock_ib = {
+      endpoint_id = 10,
+      data = {
+        elements = {
+          {value = 0x0E}  -- BatChargeLevel
+        }
+      }
+    }
+    attr_handlers.power_source_attribute_list_handler(nil, mock_device, mock_ib, nil)
+    assert(mock_device:get_field(fields.CLOSURE_BATTERY_SUPPORT) == fields.battery_support.BATTERY_LEVEL, "Should be BATTERY_LEVEL, got " .. tostring(mock_device:get_field(fields.CLOSURE_BATTERY_SUPPORT)))
+  end
+)
+
+-- Test: power_source_attribute_list_handler with no battery attribute
+test.register_coroutine_test(
+  "power_source_attribute_list_handler sets NO_BATTERY support", function()
+    -- First reset fields
+    local fields = require "sub_drivers.closure.closure_utils.fields"
+    mock_device:set_field(fields.CLOSURE_BATTERY_SUPPORT, nil)
+    local attr_handlers = require "sub_drivers.closure.closure_handlers.attribute_handlers"
+    local mock_ib = {
+      endpoint_id = 10,
+      data = {
+        elements = {
+          {value = 0x00}  -- Some other attribute (not battery)
+        }
+      }
+    }
+    attr_handlers.power_source_attribute_list_handler(nil, mock_device, mock_ib, nil)
+    assert(mock_device:get_field(fields.CLOSURE_BATTERY_SUPPORT) == fields.battery_support.NO_BATTERY, "Should be NO_BATTERY, got " .. tostring(mock_device:get_field(fields.CLOSURE_BATTERY_SUPPORT)))
+  end
+)
+
+-- Test: deep_equals with nil values
+test.register_coroutine_test(
+  "deep_equals handles nil values correctly", function()
+    local closure_utils = require "sub_drivers.closure.closure_utils.utils"
+    assert(closure_utils.deep_equals(nil, nil, {ignore_functions = true}), "nil should equal nil")
+    assert(not closure_utils.deep_equals(nil, 1, {ignore_functions = true}), "nil should not equal 1")
+  end
+)
+
+-- Test: deep_equals with different types
+test.register_coroutine_test(
+  "deep_equals returns false for different types", function()
+    local closure_utils = require "sub_drivers.closure.closure_utils.utils"
+    assert(not closure_utils.deep_equals(1, "1", {ignore_functions = true}), "number should not equal string")
+    assert(not closure_utils.deep_equals({}, 1, {ignore_functions = true}), "table should not equal number")
+  end
+)
+
+-- Test: deep_equals with functions ignored
+test.register_coroutine_test(
+  "deep_equals ignores functions when option set", function()
+    local closure_utils = require "sub_drivers.closure.closure_utils.utils"
+    local t1 = {fn = function() return 1 end}
+    local t2 = {fn = function() return 2 end}
+    assert(closure_utils.deep_equals(t1, t2, {ignore_functions = true}), "Tables with different functions should be equal when ignoring functions")
+  end
+)
+
+-- Test: endpoint_to_component with door type
+test.register_coroutine_test(
+  "endpoint_to_component with door type returns door1/door2", function()
+    update_profile_door()
+    test.wait_for_events()
+    local component = mock_door_device:endpoint_to_component(11)
+    assert(component == "door1", "Expected door1, got " .. tostring(component))
+    component = mock_door_device:endpoint_to_component(12)
+    assert(component == "door2", "Expected door2, got " .. tostring(component))
+  end,
+  {test_init = test_init_door}
+)
+
+-- Test: component_to_endpoint with door type
+test.register_coroutine_test(
+  "component_to_endpoint with door type returns correct endpoint", function()
+    update_profile_door()
+    test.wait_for_events()
+    local endpoint = mock_door_device:component_to_endpoint("door1")
+    assert(endpoint == 11, "Expected 11, got " .. tostring(endpoint))
+    endpoint = mock_door_device:component_to_endpoint("door2")
+    assert(endpoint == 12, "Expected 12, got " .. tostring(endpoint))
+  end,
+  {test_init = test_init_door}
+)
+
 test.run_registered_tests()
